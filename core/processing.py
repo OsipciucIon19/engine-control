@@ -89,7 +89,7 @@ class MotorStateMachine:
 
     def update(self, z_score: float, baseline_ready: bool) -> tuple[str, float]:
         if not baseline_ready:
-            self.state = "normal"
+            self.state = "stop"
         elif z_score >= self.stop_threshold_z:
             self.state = "stop"
         elif z_score >= self.reduced_threshold_z:

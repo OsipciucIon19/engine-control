@@ -88,6 +88,32 @@ class ProcessingTests(unittest.TestCase):
         self.assertEqual(assessment.state, "stop")
         self.assertEqual(assessment.motor_speed_ratio, 0.0)
 
+    def test_fault_detector_keeps_motor_stopped_until_baseline_ready(self) -> None:
+        detector = FaultDetector(
+            window_size=3,
+            baseline_windows=2,
+            reduced_threshold_z=1.0,
+            stop_threshold_z=2.0,
+            normal_speed_ratio=1.0,
+            reduced_speed_ratio=0.5,
+        )
+
+        samples = [
+            SensorSample(f"t{i}", 1.0 + i * 0.01, 1.1 + i * 0.01, 1.2 + i * 0.01, 10.0, 40.0)
+            for i in range(4)
+        ]
+
+        assessments = []
+        for sample in samples:
+            assessment = detector.process_sample(sample)
+            if assessment is not None:
+                assessments.append(assessment)
+
+        self.assertEqual(len(assessments), 2)
+        self.assertFalse(assessments[0].baseline_ready)
+        self.assertEqual(assessments[0].state, "stop")
+        self.assertEqual(assessments[0].motor_speed_ratio, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

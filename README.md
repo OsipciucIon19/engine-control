@@ -2,7 +2,17 @@
 
 Real-time motor fault detection prototype for Raspberry Pi using a Schur-decomposition-based health indicator.
 
-The current implementation runs end to end with a simulated sensor source and includes:
+The current implementation supports both simulation and a real hardware path for:
+
+- Raspberry Pi 5
+- MY6812 12 VDC 150 W brushed motor
+- BTS7960B motor driver
+- ADXL345 accelerometer
+- ADS1115 ADC
+- ACS712 current sensor
+- DS18B20 temperature probe
+
+It includes:
 
 - 5-channel sensor sampling: vibration X/Y/Z, current, temperature
 - Sliding-window covariance analysis
@@ -15,13 +25,14 @@ The current implementation runs end to end with a simulated sensor source and in
 
 The signal-processing and control pipeline is implemented.
 
-The hardware layer is still simulation-first:
+Supported runtime modes:
 
-- Sensor input is simulated
-- GPIO setup is a stub
-- Motor control is represented as an in-memory command, not real PWM output
+- `SENSOR_MODE=simulated` uses synthetic sensor values for development
+- `SENSOR_MODE=real` reads `ADXL345`, `ADS1115 + ACS712`, and `DS18B20`
+- `MOTOR_MODE=mock` keeps motor commands in memory
+- `MOTOR_MODE=real` drives the `BTS7960` with Raspberry Pi PWM and enable pins
 
-If you want to deploy this on a real Raspberry Pi motor rig, the next step is wiring `hardware/sensors.py`, `hardware/motor.py`, and `hardware/gpio_setup.py` to actual devices.
+The runtime stops the motor on repeated sensor read failures and disables the driver on shutdown.
 
 ## Project Structure
 
@@ -33,9 +44,9 @@ If you want to deploy this on a real Raspberry Pi motor rig, the next step is wi
 │   ├── processing.py        Sliding window, covariance, Z-score, state machine
 │   └── schur.py             Pure-Python QR/Schur implementation
 ├── hardware/
-│   ├── gpio_setup.py        Raspberry Pi GPIO hook point
-│   ├── motor.py             Motor controller abstraction
-│   └── sensors.py           Simulated sensor reader and sensor factory
+│   ├── gpio_setup.py        GPIO setup hook
+│   ├── motor.py             Mock and BTS7960-backed motor controllers
+│   └── sensors.py           Simulated and real sensor readers
 ├── services/
 │   └── api_client.py        Optional HTTP batch sender
 ├── tests/
@@ -78,10 +89,11 @@ For each full window:
 - Python 3.13
 - Optional Python packages from `requirements.txt`
 
-The code tolerates missing optional dependencies:
+Real hardware mode also needs:
 
-- If `python-dotenv` is not installed, `.env` loading is skipped.
-- If `requests` is not installed, API delivery is skipped.
+- `smbus2` for I2C sensor access
+- `gpiozero` for PWM and GPIO output
+- Raspberry Pi `I2C` and `1-Wire` interfaces enabled
 
 ## Setup
 
@@ -113,14 +125,18 @@ Run with a simulated fault injected after 120 samples:
 FAULT_AFTER_SAMPLES=120 ./venv/bin/python main.py
 ```
 
+Run against real hardware:
+
+```bash
+SENSOR_MODE=real MOTOR_MODE=real ./venv/bin/python main.py
+```
+
 ## Configuration
 
 Environment variables are loaded from `.env` when `python-dotenv` is available.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `MOTOR_PIN` | `18` | Reserved GPIO pin for motor control |
-| `SENSOR_PIN` | `17` | Reserved GPIO pin for sensor hookup |
 | `API_ENDPOINT` | empty | HTTP endpoint for batch delivery |
 | `DEVICE_ID` | `device_001` | Device identifier sent with batches |
 | `BATCH_SIZE` | `10` | Number of records per outgoing batch |
@@ -132,9 +148,30 @@ Environment variables are loaded from `.env` when `python-dotenv` is available.
 | `STOP_THRESHOLD_Z` | `3.5` | Z-score threshold for stop mode |
 | `REDUCED_SPEED_RATIO` | `0.6` | Motor speed ratio in reduced mode |
 | `NORMAL_SPEED_RATIO` | `1.0` | Motor speed ratio in normal mode |
-| `SENSOR_MODE` | `simulated` | Current sensor backend |
+| `SENSOR_MODE` | `simulated` | `simulated` or `real` sensor backend |
+| `MOTOR_MODE` | `mock` | `mock` or `real` motor backend |
 | `FAULT_AFTER_SAMPLES` | `0` | Injects a simulated fault after N samples; `0` disables fault injection |
 | `SENDER_ENABLED` | `true` | Enables API batch delivery |
+| `SEND_RETRY_INTERVAL` | `2` | Seconds between HTTP retry attempts |
+| `SEND_MAX_RETRIES` | `5` | Retries before a batch is spooled locally |
+| `SENDER_SPOOL_PATH` | `data/failed_batches.jsonl` | Local JSONL spool for undelivered batches |
+| `MAX_SENSOR_FAILURES` | `3` | Consecutive read failures before exit |
+| `I2C_BUS` | `1` | Linux I2C bus number |
+| `ADXL345_ADDRESS` | `0x53` | ADXL345 I2C address |
+| `ADS1115_ADDRESS` | `0x48` | ADS1115 I2C address |
+| `ADS1115_CHANNEL` | `0` | ADS1115 single-ended channel used for ACS712 |
+| `ADS1115_GAIN` | `4.096` | ADS1115 full-scale range in volts |
+| `ADS1115_DATA_RATE` | `128` | ADS1115 samples per second |
+| `ACS712_ZERO_VOLTAGE` | `2.5` | Zero-current ACS712 output in volts |
+| `ACS712_SENSITIVITY` | `0.1` | Volts per amp for ACS712 20A |
+| `ACS712_VOLTAGE_DIVIDER_RATIO` | `1.0` | Multiplier to reconstruct sensor voltage after a divider |
+| `CURRENT_NOISE_FLOOR_AMPS` | `0.05` | Clamp small current noise to zero |
+| `DS18B20_DEVICE_PATH` | `/sys/bus/w1/devices/.../w1_slave` | DS18B20 sysfs path |
+| `MOTOR_FORWARD_PWM_PIN` | `18` | BTS7960 `RPWM` pin |
+| `MOTOR_REVERSE_PWM_PIN` | `19` | BTS7960 `LPWM` pin |
+| `MOTOR_ENABLE_RIGHT_PIN` | `23` | BTS7960 `R_EN` pin |
+| `MOTOR_ENABLE_LEFT_PIN` | `24` | BTS7960 `L_EN` pin |
+| `MOTOR_PWM_FREQUENCY_HZ` | `1000` | PWM carrier frequency |
 
 ## Logging
 
@@ -147,6 +184,17 @@ The app logs computed runtime values such as:
 - whether the baseline is ready
 
 This makes it easy to observe when the simulated system transitions from healthy to degraded operation.
+
+During startup, the motor remains stopped until the baseline window is fully learned. If HTTP delivery fails repeatedly, the batch is retried and then written to the local spool path instead of being dropped.
+
+## Wiring Notes
+
+- `ADXL345` and `ADS1115` share the Pi I2C bus on `GPIO2/GPIO3`.
+- `DS18B20` should be on `GPIO4` with a `4.7 kOhm` pull-up to `3.3 V`.
+- The default `BTS7960` mapping is `GPIO18 -> RPWM`, `GPIO19 -> LPWM`, `GPIO23 -> R_EN`, `GPIO24 -> L_EN`.
+- The current code drives forward only and keeps reverse PWM low.
+- `ACS712` calibration is installation-specific. Set `ACS712_ZERO_VOLTAGE` after measuring the zero-current output.
+- If you scale the `ACS712` output with a voltage divider before the `ADS1115`, set `ACS712_VOLTAGE_DIVIDER_RATIO` to match that divider.
 
 ## Testing
 
@@ -173,8 +221,7 @@ The tests cover:
 
 Typical follow-up work for a real deployment:
 
-- Add real IMU, current, and temperature sensor drivers
-- Replace the motor stub with actual PWM/GPIO control
-- Persist failed API batches for retry
+- Calibrate `ACS712_ZERO_VOLTAGE` at zero load
+- Add replay tooling for locally spooled failed batches if you want an operator-driven recovery workflow
 - Add graceful shutdown and signal handling
 - Add integration tests around the full runtime loop
