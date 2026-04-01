@@ -26,6 +26,7 @@ class SensorSample:
 class HealthAssessment:
     health_index: float
     z_score: float
+    raw_z_score: float
     state: str
     motor_speed_ratio: float
     baseline_ready: bool
@@ -78,24 +79,67 @@ class MotorStateMachine:
         self,
         reduced_threshold_z: float,
         stop_threshold_z: float,
+        reduced_clear_threshold_z: Optional[float] = None,
+        stop_clear_threshold_z: Optional[float] = None,
         normal_speed_ratio: float = 1.0,
         reduced_speed_ratio: float = 0.6,
+        confirmation_windows: int = 1,
     ) -> None:
         self.reduced_threshold_z = reduced_threshold_z
         self.stop_threshold_z = stop_threshold_z
+        self.reduced_clear_threshold_z = (
+            reduced_clear_threshold_z
+            if reduced_clear_threshold_z is not None
+            else reduced_threshold_z
+        )
+        self.stop_clear_threshold_z = (
+            stop_clear_threshold_z if stop_clear_threshold_z is not None else stop_threshold_z
+        )
         self.normal_speed_ratio = normal_speed_ratio
         self.reduced_speed_ratio = reduced_speed_ratio
+        self.confirmation_windows = max(1, confirmation_windows)
         self.state = "normal"
+        self.pending_state: Optional[str] = None
+        self.pending_count = 0
 
     def update(self, z_score: float, baseline_ready: bool) -> tuple[str, float]:
         if not baseline_ready:
-            self.state = "stop"
-        elif z_score >= self.stop_threshold_z:
-            self.state = "stop"
-        elif z_score >= self.reduced_threshold_z:
-            self.state = "reduced"
+            target_state = "stop"
+        elif self.state == "stop":
+            if z_score >= self.stop_clear_threshold_z:
+                target_state = "stop"
+            elif z_score >= self.reduced_clear_threshold_z:
+                target_state = "reduced"
+            else:
+                target_state = "normal"
+        elif self.state == "reduced":
+            if z_score >= self.stop_threshold_z:
+                target_state = "stop"
+            elif z_score < self.reduced_clear_threshold_z:
+                target_state = "normal"
+            else:
+                target_state = "reduced"
         else:
-            self.state = "normal"
+            if z_score >= self.stop_threshold_z:
+                target_state = "stop"
+            elif z_score >= self.reduced_threshold_z:
+                target_state = "reduced"
+            else:
+                target_state = "normal"
+
+        if target_state != self.state:
+            if target_state == self.pending_state:
+                self.pending_count += 1
+            else:
+                self.pending_state = target_state
+                self.pending_count = 1
+            if self.pending_count >= self.confirmation_windows:
+                self.state = target_state
+                self.pending_state = None
+                self.pending_count = 0
+        else:
+            self.pending_state = None
+            self.pending_count = 0
 
         if self.state == "stop":
             return self.state, 0.0
@@ -111,17 +155,25 @@ class FaultDetector:
         baseline_windows: int,
         reduced_threshold_z: float,
         stop_threshold_z: float,
+        reduced_clear_threshold_z: Optional[float] = None,
+        stop_clear_threshold_z: Optional[float] = None,
         normal_speed_ratio: float = 1.0,
         reduced_speed_ratio: float = 0.6,
+        z_score_smoothing_windows: int = 1,
+        state_confirmation_windows: int = 1,
     ) -> None:
         self.window: Deque[SensorSample] = deque(maxlen=window_size)
         self.baseline_indices: List[float] = []
         self.baseline_windows = baseline_windows
+        self.z_scores: Deque[float] = deque(maxlen=max(1, z_score_smoothing_windows))
         self.state_machine = MotorStateMachine(
             reduced_threshold_z=reduced_threshold_z,
             stop_threshold_z=stop_threshold_z,
+            reduced_clear_threshold_z=reduced_clear_threshold_z,
+            stop_clear_threshold_z=stop_clear_threshold_z,
             normal_speed_ratio=normal_speed_ratio,
             reduced_speed_ratio=reduced_speed_ratio,
+            confirmation_windows=state_confirmation_windows,
         )
 
     def process_sample(self, sample: SensorSample) -> Optional[HealthAssessment]:
@@ -142,16 +194,19 @@ class FaultDetector:
             baseline_mean = mean(self.baseline_indices)
             baseline_std = standard_deviation(self.baseline_indices)
             if baseline_std <= 1e-12:
-                z_score = float("inf") if health_index > baseline_mean else 0.0
+                raw_z_score = float("inf") if health_index > baseline_mean else 0.0
             else:
-                z_score = (health_index - baseline_mean) / baseline_std
+                raw_z_score = (health_index - baseline_mean) / baseline_std
         else:
-            z_score = 0.0
+            raw_z_score = 0.0
 
+        self.z_scores.append(raw_z_score)
+        z_score = mean(self.z_scores)
         state, speed_ratio = self.state_machine.update(z_score, baseline_ready)
         return HealthAssessment(
             health_index=health_index,
             z_score=z_score,
+            raw_z_score=raw_z_score,
             state=state,
             motor_speed_ratio=speed_ratio,
             baseline_ready=baseline_ready,

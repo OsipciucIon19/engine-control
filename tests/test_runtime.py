@@ -12,9 +12,11 @@ class _FakeApiClient:
     def __init__(self, results: list[str]) -> None:
         self.results = results
         self.calls = 0
+        self.batches: list[list[dict]] = []
 
     def send_batch(self, batch: list[dict]) -> str:
         self.calls += 1
+        self.batches.append(batch)
         if self.results:
             return self.results.pop(0)
         return "sent"
@@ -60,6 +62,35 @@ class RuntimeTests(unittest.TestCase):
 
             self.assertEqual(send_queue.get_nowait(), [{"value": 2}])
             self.assertFalse(pending_path.exists())
+
+    def test_sender_loop_splits_oversized_batch_until_send_succeeds(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            spool_path = Path(temp_dir) / "failed_batches.jsonl"
+            send_queue: "queue.Queue[list[dict] | object]" = queue.Queue()
+            send_queue.put([{"value": 1}, {"value": 2}, {"value": 3}, {"value": 4}])
+            send_queue.put(main.SEND_STOP)
+            api_client = _FakeApiClient(["split", "sent", "sent"])
+
+            main.sender_loop(send_queue, api_client, retry_interval=0, max_retries=2, spool_path=spool_path)
+
+            self.assertEqual(api_client.batches[0], [{"value": 1}, {"value": 2}, {"value": 3}, {"value": 4}])
+            self.assertEqual(api_client.batches[1], [{"value": 1}, {"value": 2}])
+            self.assertEqual(api_client.batches[2], [{"value": 3}, {"value": 4}])
+            self.assertFalse(spool_path.exists())
+
+    def test_sender_loop_spools_oversized_single_record(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            spool_path = Path(temp_dir) / "failed_batches.jsonl"
+            send_queue: "queue.Queue[list[dict] | object]" = queue.Queue()
+            send_queue.put([{"value": 1}])
+            send_queue.put(main.SEND_STOP)
+            api_client = _FakeApiClient(["split"])
+
+            main.sender_loop(send_queue, api_client, retry_interval=0, max_retries=2, spool_path=spool_path)
+
+            self.assertTrue(spool_path.exists())
+            lines = spool_path.read_text(encoding="utf-8").strip().splitlines()
+            self.assertEqual(json.loads(lines[0]), [{"value": 1}])
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 import math
 import unittest
 
-from core.processing import FaultDetector, SensorSample, covariance_matrix
+from core.processing import FaultDetector, MotorStateMachine, SensorSample, covariance_matrix, mean
 from core.schur import off_diagonal_norm, schur_decomposition, schur_health_index
 
 
@@ -113,6 +113,64 @@ class ProcessingTests(unittest.TestCase):
         self.assertFalse(assessments[0].baseline_ready)
         self.assertEqual(assessments[0].state, "stop")
         self.assertEqual(assessments[0].motor_speed_ratio, 0.0)
+
+    def test_motor_state_machine_uses_hysteresis_to_avoid_flapping(self) -> None:
+        state_machine = MotorStateMachine(
+            reduced_threshold_z=2.2,
+            stop_threshold_z=4.0,
+            reduced_clear_threshold_z=1.8,
+            stop_clear_threshold_z=3.5,
+        )
+
+        observed_states = [
+            state_machine.update(z_score, baseline_ready=True)[0]
+            for z_score in [2.25, 1.95, 2.05, 1.85, 1.79]
+        ]
+
+        self.assertEqual(
+            observed_states,
+            ["reduced", "reduced", "reduced", "reduced", "normal"],
+        )
+
+    def test_motor_state_machine_requires_confirmation_before_switching(self) -> None:
+        state_machine = MotorStateMachine(
+            reduced_threshold_z=2.0,
+            stop_threshold_z=4.0,
+            confirmation_windows=2,
+        )
+
+        observed_states = [
+            state_machine.update(z_score, baseline_ready=True)[0]
+            for z_score in [2.2, 1.9, 2.3, 2.4]
+        ]
+
+        self.assertEqual(observed_states, ["normal", "normal", "normal", "reduced"])
+
+    def test_fault_detector_smooths_reported_z_score(self) -> None:
+        detector = FaultDetector(
+            window_size=2,
+            baseline_windows=1,
+            reduced_threshold_z=10.0,
+            stop_threshold_z=20.0,
+            z_score_smoothing_windows=3,
+        )
+
+        detector.window.extend(
+            [
+                SensorSample("b0", 1.0, 1.1, 1.2, 10.0, 40.0),
+                SensorSample("b1", 1.1, 1.2, 1.3, 10.0, 40.0),
+            ]
+        )
+        detector.baseline_indices = [1.0, 2.0]
+        detector.z_scores.extend([1.0, 2.0])
+
+        assessment = detector.process_sample(
+            SensorSample("n0", 1.2, 1.3, 1.4, 10.0, 40.0)
+        )
+
+        self.assertIsNotNone(assessment)
+        assert assessment is not None
+        self.assertAlmostEqual(assessment.z_score, mean([1.0, 2.0, assessment.raw_z_score]))
 
 
 if __name__ == "__main__":

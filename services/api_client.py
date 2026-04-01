@@ -10,7 +10,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency
     requests = None
 
 
-SendBatchResult = Literal["sent", "retry", "skipped"]
+SendBatchResult = Literal["sent", "retry", "skipped", "split"]
 
 
 class ApiClient:
@@ -38,5 +38,13 @@ class ApiClient:
             self.logger.info("Sent batch with %s records", len(batch))
             return "sent"
         except requests.RequestException as exc:
+            response = getattr(exc, "response", None)
+            if response is not None and response.status_code == 413:
+                self.logger.warning(
+                    "Batch too large for server records=%s status=%s; splitting batch",
+                    len(batch),
+                    response.status_code,
+                )
+                return "split"
             self.logger.warning("Failed to send batch: %s", exc)
             return "retry"

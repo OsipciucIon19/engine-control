@@ -107,24 +107,38 @@ def sender_loop(
             if item is SEND_STOP:
                 return
 
-            batch = item
-            attempts = 0
-            while True:
-                result = api_client.send_batch(batch)
-                if result in {"sent", "skipped"}:
-                    break
+            pending_batches = [item]
+            while pending_batches:
+                batch = pending_batches.pop(0)
+                attempts = 0
+                while True:
+                    result = api_client.send_batch(batch)
+                    if result in {"sent", "skipped"}:
+                        break
+                    if result == "split":
+                        if len(batch) <= 1:
+                            spool_batch(batch, spool_path)
+                            logger.error(
+                                "spooled_oversized_single_record path=%s",
+                                spool_path,
+                            )
+                            break
+                        midpoint = len(batch) // 2
+                        pending_batches.insert(0, batch[midpoint:])
+                        pending_batches.insert(0, batch[:midpoint])
+                        break
 
-                attempts += 1
-                if max_retries > 0 and attempts >= max_retries:
-                    spool_batch(batch, spool_path)
-                    logger.error(
-                        "spooled_failed_batch records=%s attempts=%s path=%s",
-                        len(batch),
-                        attempts,
-                        spool_path,
-                    )
-                    break
-                time.sleep(retry_interval)
+                    attempts += 1
+                    if max_retries > 0 and attempts >= max_retries:
+                        spool_batch(batch, spool_path)
+                        logger.error(
+                            "spooled_failed_batch records=%s attempts=%s path=%s",
+                            len(batch),
+                            attempts,
+                            spool_path,
+                        )
+                        break
+                    time.sleep(retry_interval)
         finally:
             send_queue.task_done()
 
@@ -148,8 +162,12 @@ def main() -> None:
         baseline_windows=SETTINGS.baseline_windows,
         reduced_threshold_z=SETTINGS.reduced_threshold_z,
         stop_threshold_z=SETTINGS.stop_threshold_z,
+        reduced_clear_threshold_z=SETTINGS.reduced_clear_threshold_z,
+        stop_clear_threshold_z=SETTINGS.stop_clear_threshold_z,
         normal_speed_ratio=SETTINGS.normal_speed_ratio,
         reduced_speed_ratio=SETTINGS.reduced_speed_ratio,
+        z_score_smoothing_windows=SETTINGS.z_score_smoothing_windows,
+        state_confirmation_windows=SETTINGS.state_confirmation_windows,
     )
     motor = MotorController(settings=SETTINGS)
     api_client = ApiClient(
@@ -203,8 +221,9 @@ def main() -> None:
             else:
                 motor_command = motor.apply(assessment.state, assessment.motor_speed_ratio)
                 logger.info(
-                    "health_index=%.6f z_score=%.3f state=%s speed_ratio=%.2f baseline_ready=%s",
+                    "health_index=%.6f raw_z_score=%.3f z_score=%.3f state=%s speed_ratio=%.2f baseline_ready=%s",
                     assessment.health_index,
+                    assessment.raw_z_score,
                     assessment.z_score,
                     assessment.state,
                     assessment.motor_speed_ratio,
