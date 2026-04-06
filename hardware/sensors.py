@@ -244,7 +244,23 @@ class ACS712CurrentReader:
 
 class DS18B20Reader:
     def __init__(self, device_path: str) -> None:
-        self.device_path = Path(device_path)
+        self.device_path = self._resolve_device_path(device_path)
+
+    @staticmethod
+    def _resolve_device_path(device_path: str) -> Path:
+        path = Path(device_path)
+        if path.is_file():
+            return path
+
+        if path.is_dir():
+            matches = sorted(path.glob("28-*/w1_slave"))
+            if not matches:
+                raise SensorReadError(
+                    f"No DS18B20 device file found in {path}. Expected 28-*/w1_slave"
+                )
+            return matches[0]
+
+        raise SensorReadError(f"DS18B20 device file not found: {path}")
 
     def read_celsius(self) -> float:
         try:

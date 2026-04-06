@@ -119,6 +119,26 @@ Run from the repository root:
 ./venv/bin/python main.py
 ```
 
+Common test/run commands:
+
+1. Simulated sensors and simulated motor:
+
+```bash
+SENSOR_MODE=simulated MOTOR_MODE=mock ./venv/bin/python main.py
+```
+
+2. Real sensors and simulated motor:
+
+```bash
+SENSOR_MODE=real MOTOR_MODE=mock ./venv/bin/python main.py
+```
+
+3. Real sensors and real motor:
+
+```bash
+SENSOR_MODE=real MOTOR_MODE=real ./venv/bin/python main.py
+```
+
 Run with a simulated fault injected after 120 samples:
 
 ```bash
@@ -129,6 +149,18 @@ Run against real hardware:
 
 ```bash
 SENSOR_MODE=real MOTOR_MODE=real ./venv/bin/python main.py
+```
+
+Run a bounded smoke test without entering the infinite runtime loop:
+
+```bash
+./venv/bin/python tools/runtime_smoke_test.py --samples 25 --sensor-mode simulated --motor-mode mock
+```
+
+Run a real-sensor smoke test while keeping motor control mocked for safety:
+
+```bash
+./venv/bin/python tools/runtime_smoke_test.py --samples 25 --sensor-mode real --motor-mode mock
 ```
 
 ## Configuration
@@ -166,7 +198,7 @@ Environment variables are loaded from `.env` when `python-dotenv` is available.
 | `ACS712_SENSITIVITY` | `0.1` | Volts per amp for ACS712 20A |
 | `ACS712_VOLTAGE_DIVIDER_RATIO` | `1.0` | Multiplier to reconstruct sensor voltage after a divider |
 | `CURRENT_NOISE_FLOOR_AMPS` | `0.05` | Clamp small current noise to zero |
-| `DS18B20_DEVICE_PATH` | `/sys/bus/w1/devices/.../w1_slave` | DS18B20 sysfs path |
+| `DS18B20_DEVICE_PATH` | `/sys/bus/w1/devices` | DS18B20 sysfs directory or explicit `w1_slave` path |
 | `MOTOR_FORWARD_PWM_PIN` | `18` | BTS7960 `RPWM` pin |
 | `MOTOR_REVERSE_PWM_PIN` | `19` | BTS7960 `LPWM` pin |
 | `MOTOR_ENABLE_RIGHT_PIN` | `23` | BTS7960 `R_EN` pin |
@@ -210,6 +242,7 @@ The tests cover:
 - Health-index extraction
 - Covariance-matrix symmetry
 - Fault-detector transition into `stop`
+- bounded smoke-test entrypoint for Pi sensor bring-up
 
 ## Notes
 

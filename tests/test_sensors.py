@@ -1,8 +1,10 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from config import Settings
-from hardware.sensors import I2CBus, RealSensorReader, SensorReadError
+from hardware.sensors import DS18B20Reader, I2CBus, RealSensorReader, SensorReadError
 
 
 class _FailingSMBus:
@@ -24,6 +26,28 @@ class _MissingBusFactory:
 
 
 class SensorTests(unittest.TestCase):
+    def test_ds18b20_reader_auto_discovers_probe_from_directory(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            probe_file = Path(temp_dir) / "28-000000000001" / "w1_slave"
+            probe_file.parent.mkdir()
+            probe_file.write_text(
+                "aa bb cc dd ee ff gg hh ii : crc=ii YES\n"
+                "aa bb cc dd ee ff gg hh ii t=23125\n",
+                encoding="ascii",
+            )
+
+            reader = DS18B20Reader(temp_dir)
+
+            self.assertEqual(reader.device_path, probe_file)
+            self.assertEqual(reader.read_celsius(), 23.125)
+
+    def test_ds18b20_reader_raises_when_directory_has_no_probe(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            with self.assertRaises(SensorReadError) as context:
+                DS18B20Reader(temp_dir)
+
+        self.assertIn("No DS18B20 device file found", str(context.exception))
+
     def test_i2c_bus_open_wraps_missing_device_error(self) -> None:
         with patch("smbus2.SMBus", _MissingBusFactory):
             with self.assertRaises(SensorReadError) as context:

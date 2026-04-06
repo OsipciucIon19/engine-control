@@ -34,7 +34,7 @@ class Settings:
     normal_speed_ratio: float = float(os.getenv("NORMAL_SPEED_RATIO", 1.0))
     z_score_smoothing_windows: int = int(os.getenv("Z_SCORE_SMOOTHING_WINDOWS", 5))
     state_confirmation_windows: int = int(os.getenv("STATE_CONFIRMATION_WINDOWS", 3))
-    sensor_mode: str = os.getenv("SENSOR_MODE", "simulated")
+    sensor_mode: str = os.getenv("SENSOR_MODE", "real")
     motor_mode: str = os.getenv("MOTOR_MODE", "mock")
     fault_after_samples: int = int(os.getenv("FAULT_AFTER_SAMPLES", 0))
     sender_enabled: bool = _get_bool("SENDER_ENABLED", True)
@@ -54,7 +54,7 @@ class Settings:
     current_noise_floor_amps: float = float(os.getenv("CURRENT_NOISE_FLOOR_AMPS", 0.0))
     ds18b20_device_path: str = os.getenv(
         "DS18B20_DEVICE_PATH",
-        "/sys/bus/w1/devices/28-000000000000/w1_slave",
+        "/sys/bus/w1/devices",
     )
     motor_forward_pwm_pin: int = int(os.getenv("MOTOR_FORWARD_PWM_PIN", 18))
     motor_reverse_pwm_pin: int = int(os.getenv("MOTOR_REVERSE_PWM_PIN", 19))
