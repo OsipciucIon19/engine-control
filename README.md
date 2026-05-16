@@ -180,6 +180,10 @@ Environment variables are loaded from `.env` when `python-dotenv` is available.
 | `STOP_THRESHOLD_Z` | `3.5` | Z-score threshold for stop mode |
 | `REDUCED_SPEED_RATIO` | `0.6` | Motor speed ratio in reduced mode |
 | `NORMAL_SPEED_RATIO` | `1.0` | Motor speed ratio in normal mode |
+| `REDUCED_VIBRATION_RMS_THRESHOLD` | empty | Direct RMS vibration threshold that forces `reduced` when reached |
+| `STOP_VIBRATION_RMS_THRESHOLD` | empty | Direct RMS vibration threshold that forces `stop` when reached |
+| `REDUCED_TEMPERATURE_C_THRESHOLD` | empty | Direct temperature threshold in Celsius that forces `reduced` when reached |
+| `STOP_TEMPERATURE_C_THRESHOLD` | empty | Direct temperature threshold in Celsius that forces `stop` when reached |
 | `SENSOR_MODE` | `simulated` | `simulated` or `real` sensor backend |
 | `MOTOR_MODE` | `mock` | `mock` or `real` motor backend |
 | `FAULT_AFTER_SAMPLES` | `0` | Injects a simulated fault after N samples; `0` disables fault injection |
@@ -249,6 +253,7 @@ The tests cover:
 - The current health index is the dominant diagonal value of the Schur triangular matrix derived from the covariance matrix.
 - The baseline is learned online from the first configured number of windows.
 - If the baseline variance is effectively zero and the health index increases, the detector treats that as an extreme anomaly.
+- Optional direct safety thresholds can override the statistical detector using per-sample `vibration_rms` and temperature.
 
 ## Next Steps
 

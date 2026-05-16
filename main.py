@@ -166,6 +166,10 @@ def main() -> None:
         stop_clear_threshold_z=SETTINGS.stop_clear_threshold_z,
         normal_speed_ratio=SETTINGS.normal_speed_ratio,
         reduced_speed_ratio=SETTINGS.reduced_speed_ratio,
+        reduced_vibration_rms_threshold=SETTINGS.reduced_vibration_rms_threshold,
+        stop_vibration_rms_threshold=SETTINGS.stop_vibration_rms_threshold,
+        reduced_temperature_c_threshold=SETTINGS.reduced_temperature_c_threshold,
+        stop_temperature_c_threshold=SETTINGS.stop_temperature_c_threshold,
         z_score_smoothing_windows=SETTINGS.z_score_smoothing_windows,
         state_confirmation_windows=SETTINGS.state_confirmation_windows,
     )
@@ -221,13 +225,16 @@ def main() -> None:
             else:
                 motor_command = motor.apply(assessment.state, assessment.motor_speed_ratio)
                 logger.info(
-                    "health_index=%.6f raw_z_score=%.3f z_score=%.3f state=%s speed_ratio=%.2f baseline_ready=%s",
+                    "health_index=%.6f raw_z_score=%.3f z_score=%.3f vibration_rms=%.6f temperature=%.2f state=%s speed_ratio=%.2f baseline_ready=%s override_reason=%s",
                     assessment.health_index,
                     assessment.raw_z_score,
                     assessment.z_score,
+                    assessment.vibration_rms,
+                    sample.temperature,
                     assessment.state,
                     assessment.motor_speed_ratio,
                     assessment.baseline_ready,
+                    assessment.override_reason or "-",
                 )
 
             buffer.append(

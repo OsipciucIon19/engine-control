@@ -34,50 +34,61 @@ class RealMotorController:
     def __init__(self, settings: Settings) -> None:
         try:
             from gpiozero import OutputDevice, PWMOutputDevice
+            from gpiozero.exc import BadPinFactory, GPIOZeroError
         except ModuleNotFoundError as exc:
             raise RuntimeError(
                 "gpiozero is required for MOTOR_MODE=real."
             ) from exc
 
-        self.forward_pwm = PWMOutputDevice(
-            pin=settings.motor_forward_pwm_pin,
-            active_high=True,
-            initial_value=0.0,
-            frequency=settings.motor_pwm_frequency_hz,
-        )
-        self.reverse_pwm = PWMOutputDevice(
-            pin=settings.motor_reverse_pwm_pin,
-            active_high=True,
-            initial_value=0.0,
-            frequency=settings.motor_pwm_frequency_hz,
-        )
-        self.enable_right = OutputDevice(
-            pin=settings.motor_enable_right_pin,
-            active_high=True,
-            initial_value=False,
-        )
-        self.enable_left = OutputDevice(
-            pin=settings.motor_enable_left_pin,
-            active_high=True,
-            initial_value=False,
-        )
+        try:
+            self.forward_pwm = PWMOutputDevice(
+                pin=settings.motor_forward_pwm_pin,
+                active_high=True,
+                initial_value=0.0,
+                frequency=settings.motor_pwm_frequency_hz,
+            )
+            self.reverse_pwm = PWMOutputDevice(
+                pin=settings.motor_reverse_pwm_pin,
+                active_high=True,
+                initial_value=0.0,
+                frequency=settings.motor_pwm_frequency_hz,
+            )
+            self.enable_right = OutputDevice(
+                pin=settings.motor_enable_right_pin,
+                active_high=True,
+                initial_value=False,
+            )
+            self.enable_left = OutputDevice(
+                pin=settings.motor_enable_left_pin,
+                active_high=True,
+                initial_value=False,
+            )
+        except (BadPinFactory, GPIOZeroError) as exc:
+            raise RuntimeError(
+                "MOTOR_MODE=real requires Raspberry Pi GPIO access. "
+                "Use MOTOR_MODE=mock for development or run with GPIO permissions on the Pi."
+            ) from exc
         self.current_command = MotorCommand(state="stop", speed_ratio=0.0, pwm_value=0)
         self.stop()
 
-    def _set_enabled(self, enabled: bool) -> None:
-        if enabled:
+    def _set_drive_mode(self, *, forward: bool = False, reverse: bool = False) -> None:
+        if forward and reverse:
+            raise ValueError("forward and reverse cannot both be enabled")
+        if forward or reverse:
+            # Many BTS7960 breakout boards expect both enable pins high while one PWM side is driven.
             self.enable_right.on()
             self.enable_left.on()
-        else:
-            self.enable_right.off()
-            self.enable_left.off()
+            return
+        self.enable_right.off()
+        self.enable_left.off()
 
     def apply(self, state: str, speed_ratio: float) -> MotorCommand:
         clamped_ratio = max(0.0, min(speed_ratio, 1.0))
         if state == "stop" or clamped_ratio <= 0.0:
             return self.stop()
 
-        self._set_enabled(True)
+        # Forward-only drive for BTS7960 bring-up: drive RPWM while both enables are asserted.
+        self._set_drive_mode(forward=True, reverse=False)
         self.forward_pwm.value = clamped_ratio
         self.reverse_pwm.value = 0.0
         self.current_command = MotorCommand(
@@ -90,7 +101,7 @@ class RealMotorController:
     def stop(self) -> MotorCommand:
         self.forward_pwm.off()
         self.reverse_pwm.off()
-        self._set_enabled(False)
+        self._set_drive_mode(forward=False, reverse=False)
         self.current_command = MotorCommand(state="stop", speed_ratio=0.0, pwm_value=0)
         return self.current_command
 

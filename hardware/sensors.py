@@ -243,8 +243,11 @@ class ACS712CurrentReader:
 
 
 class DS18B20Reader:
-    def __init__(self, device_path: str) -> None:
+    def __init__(self, device_path: str, min_read_interval_s: float = 0.75) -> None:
         self.device_path = self._resolve_device_path(device_path)
+        self.min_read_interval_s = max(0.0, min_read_interval_s)
+        self._last_temperature_c: Optional[float] = None
+        self._last_read_monotonic: Optional[float] = None
 
     @staticmethod
     def _resolve_device_path(device_path: str) -> Path:
@@ -263,6 +266,14 @@ class DS18B20Reader:
         raise SensorReadError(f"DS18B20 device file not found: {path}")
 
     def read_celsius(self) -> float:
+        now = time.monotonic()
+        if (
+            self._last_temperature_c is not None
+            and self._last_read_monotonic is not None
+            and now - self._last_read_monotonic < self.min_read_interval_s
+        ):
+            return self._last_temperature_c
+
         try:
             lines = self.device_path.read_text(encoding="ascii").strip().splitlines()
         except FileNotFoundError as exc:
@@ -277,7 +288,10 @@ class DS18B20Reader:
         position = lines[1].find(marker)
         if position == -1:
             raise SensorReadError(f"DS18B20 temperature marker missing in {self.device_path}")
-        return float(lines[1][position + len(marker):]) / 1000.0
+        temperature_c = float(lines[1][position + len(marker):]) / 1000.0
+        self._last_temperature_c = temperature_c
+        self._last_read_monotonic = now
+        return temperature_c
 
 
 class RealSensorReader:
@@ -299,7 +313,10 @@ class RealSensorReader:
                 voltage_divider_ratio=settings.acs712_voltage_divider_ratio,
                 noise_floor_amps=settings.current_noise_floor_amps,
             )
-            self.temperature_sensor = DS18B20Reader(settings.ds18b20_device_path)
+            self.temperature_sensor = DS18B20Reader(
+                settings.ds18b20_device_path,
+                min_read_interval_s=settings.ds18b20_min_read_interval_s,
+            )
         except Exception:
             self.bus.close()
             raise

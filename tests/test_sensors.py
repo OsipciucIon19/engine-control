@@ -48,6 +48,32 @@ class SensorTests(unittest.TestCase):
 
         self.assertIn("No DS18B20 device file found", str(context.exception))
 
+    def test_ds18b20_reader_reuses_cached_value_within_min_interval(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            probe_file = Path(temp_dir) / "28-000000000001" / "w1_slave"
+            probe_file.parent.mkdir()
+            probe_file.write_text(
+                "aa bb cc dd ee ff gg hh ii : crc=ii YES\n"
+                "aa bb cc dd ee ff gg hh ii t=23125\n",
+                encoding="ascii",
+            )
+
+            reader = DS18B20Reader(temp_dir, min_read_interval_s=0.75)
+
+            with patch("hardware.sensors.time.monotonic", side_effect=[10.0, 10.2, 11.0]):
+                first = reader.read_celsius()
+                probe_file.write_text(
+                    "aa bb cc dd ee ff gg hh ii : crc=ii YES\n"
+                    "aa bb cc dd ee ff gg hh ii t=25000\n",
+                    encoding="ascii",
+                )
+                second = reader.read_celsius()
+                third = reader.read_celsius()
+
+        self.assertEqual(first, 23.125)
+        self.assertEqual(second, 23.125)
+        self.assertEqual(third, 25.0)
+
     def test_i2c_bus_open_wraps_missing_device_error(self) -> None:
         with patch("smbus2.SMBus", _MissingBusFactory):
             with self.assertRaises(SensorReadError) as context:
@@ -76,6 +102,24 @@ class SensorTests(unittest.TestCase):
                 with self.assertRaises(SensorReadError):
                     RealSensorReader(Settings())
 
+        self.assertTrue(fake_bus.closed)
+
+    def test_real_sensor_reader_passes_ds18b20_read_interval_setting(self) -> None:
+        fake_bus = _FakeBus()
+        settings = Settings(ds18b20_min_read_interval_s=1.25)
+
+        with patch("hardware.sensors.I2CBus", return_value=fake_bus):
+            with patch("hardware.sensors.ADXL345"):
+                with patch("hardware.sensors.ADS1115"):
+                    with patch("hardware.sensors.ACS712CurrentReader"):
+                        with patch("hardware.sensors.DS18B20Reader") as ds18b20_reader:
+                            reader = RealSensorReader(settings)
+
+        ds18b20_reader.assert_called_once_with(
+            settings.ds18b20_device_path,
+            min_read_interval_s=1.25,
+        )
+        reader.close()
         self.assertTrue(fake_bus.closed)
 
 

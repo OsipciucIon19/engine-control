@@ -17,6 +17,16 @@ def _get_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _get_optional_float(name: str) -> float | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        return None
+    return float(stripped)
+
+
 @dataclass(frozen=True)
 class Settings:
     api_endpoint: str = os.getenv("API_ENDPOINT", "")
@@ -24,18 +34,22 @@ class Settings:
     batch_size: int = int(os.getenv("BATCH_SIZE", 100))
     send_interval: float = float(os.getenv("SEND_INTERVAL", 5))
     sample_rate_hz: float = float(os.getenv("SAMPLE_RATE_HZ", 100))
-    window_size: int = int(os.getenv("WINDOW_SIZE", 64))
-    baseline_windows: int = int(os.getenv("BASELINE_WINDOWS", 10))
-    reduced_threshold_z: float = float(os.getenv("REDUCED_THRESHOLD_Z", 2.0))
-    stop_threshold_z: float = float(os.getenv("STOP_THRESHOLD_Z", 3.5))
-    reduced_clear_threshold_z: float = float(os.getenv("REDUCED_CLEAR_THRESHOLD_Z", 1.8))
-    stop_clear_threshold_z: float = float(os.getenv("STOP_CLEAR_THRESHOLD_Z", 3.2))
+    window_size: int = int(os.getenv("WINDOW_SIZE", 8))
+    baseline_windows: int = int(os.getenv("BASELINE_WINDOWS", 3))
+    reduced_threshold_z: float = float(os.getenv("REDUCED_THRESHOLD_Z", 1.2))
+    stop_threshold_z: float = float(os.getenv("STOP_THRESHOLD_Z", 2.2))
+    reduced_clear_threshold_z: float = float(os.getenv("REDUCED_CLEAR_THRESHOLD_Z", 1.0))
+    stop_clear_threshold_z: float = float(os.getenv("STOP_CLEAR_THRESHOLD_Z", 2.0))
     reduced_speed_ratio: float = float(os.getenv("REDUCED_SPEED_RATIO", 0.6))
     normal_speed_ratio: float = float(os.getenv("NORMAL_SPEED_RATIO", 1.0))
+    reduced_vibration_rms_threshold: float | None = _get_optional_float("REDUCED_VIBRATION_RMS_THRESHOLD")
+    stop_vibration_rms_threshold: float | None = _get_optional_float("STOP_VIBRATION_RMS_THRESHOLD")
+    reduced_temperature_c_threshold: float | None = _get_optional_float("REDUCED_TEMPERATURE_C_THRESHOLD")
+    stop_temperature_c_threshold: float | None = _get_optional_float("STOP_TEMPERATURE_C_THRESHOLD")
     z_score_smoothing_windows: int = int(os.getenv("Z_SCORE_SMOOTHING_WINDOWS", 5))
     state_confirmation_windows: int = int(os.getenv("STATE_CONFIRMATION_WINDOWS", 3))
     sensor_mode: str = os.getenv("SENSOR_MODE", "real")
-    motor_mode: str = os.getenv("MOTOR_MODE", "mock")
+    motor_mode: str = os.getenv("MOTOR_MODE", "real")
     fault_after_samples: int = int(os.getenv("FAULT_AFTER_SAMPLES", 0))
     sender_enabled: bool = _get_bool("SENDER_ENABLED", True)
     send_retry_interval: float = float(os.getenv("SEND_RETRY_INTERVAL", 2))
@@ -48,7 +62,7 @@ class Settings:
     ads1115_channel: int = int(os.getenv("ADS1115_CHANNEL", 0))
     ads1115_gain: float = float(os.getenv("ADS1115_GAIN", "4.096"))
     ads1115_data_rate: int = int(os.getenv("ADS1115_DATA_RATE", 128))
-    acs712_zero_voltage: float = float(os.getenv("ACS712_ZERO_VOLTAGE", 2.5))
+    acs712_zero_voltage: float = float(os.getenv("ACS712_ZERO_VOLTAGE", 2.550146))
     acs712_sensitivity: float = float(os.getenv("ACS712_SENSITIVITY", 0.1))
     acs712_voltage_divider_ratio: float = float(os.getenv("ACS712_VOLTAGE_DIVIDER_RATIO", 1.0))
     current_noise_floor_amps: float = float(os.getenv("CURRENT_NOISE_FLOOR_AMPS", 0.0))
@@ -56,6 +70,7 @@ class Settings:
         "DS18B20_DEVICE_PATH",
         "/sys/bus/w1/devices",
     )
+    ds18b20_min_read_interval_s: float = float(os.getenv("DS18B20_MIN_READ_INTERVAL_S", 0.75))
     motor_forward_pwm_pin: int = int(os.getenv("MOTOR_FORWARD_PWM_PIN", 18))
     motor_reverse_pwm_pin: int = int(os.getenv("MOTOR_REVERSE_PWM_PIN", 19))
     motor_enable_right_pin: int = int(os.getenv("MOTOR_ENABLE_RIGHT_PIN", 23))

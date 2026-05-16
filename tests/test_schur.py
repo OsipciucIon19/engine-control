@@ -1,7 +1,14 @@
 import math
 import unittest
 
-from core.processing import FaultDetector, MotorStateMachine, SensorSample, covariance_matrix, mean
+from core.processing import (
+    FaultDetector,
+    MotorStateMachine,
+    SensorSample,
+    covariance_matrix,
+    mean,
+    sensitive_z_score,
+)
 from core.schur import off_diagonal_norm, schur_decomposition, schur_health_index
 
 
@@ -146,7 +153,20 @@ class ProcessingTests(unittest.TestCase):
 
         self.assertEqual(observed_states, ["normal", "normal", "normal", "reduced"])
 
-    def test_fault_detector_smooths_reported_z_score(self) -> None:
+    def test_motor_state_machine_treats_negative_z_score_as_anomaly(self) -> None:
+        state_machine = MotorStateMachine(
+            reduced_threshold_z=2.0,
+            stop_threshold_z=4.0,
+        )
+
+        observed_states = [
+            state_machine.update(z_score, baseline_ready=True)[0]
+            for z_score in [-2.1, -4.2]
+        ]
+
+        self.assertEqual(observed_states, ["reduced", "stop"])
+
+    def test_fault_detector_boosts_latest_z_score_with_recent_trend(self) -> None:
         detector = FaultDetector(
             window_size=2,
             baseline_windows=1,
@@ -170,7 +190,123 @@ class ProcessingTests(unittest.TestCase):
 
         self.assertIsNotNone(assessment)
         assert assessment is not None
-        self.assertAlmostEqual(assessment.z_score, mean([1.0, 2.0, assessment.raw_z_score]))
+        self.assertAlmostEqual(
+            assessment.z_score,
+            sensitive_z_score([1.0, 2.0, assessment.raw_z_score], assessment.raw_z_score),
+        )
+        if assessment.raw_z_score > 0:
+            self.assertGreater(assessment.z_score, assessment.raw_z_score)
+
+    def test_fault_detector_enters_reduced_when_trend_boosts_subthreshold_raw_z(self) -> None:
+        detector = FaultDetector(
+            window_size=2,
+            baseline_windows=1,
+            reduced_threshold_z=2.0,
+            stop_threshold_z=50.0,
+            reduced_speed_ratio=0.5,
+            z_score_smoothing_windows=5,
+            state_confirmation_windows=1,
+        )
+
+        detector.window.extend(
+            [
+                SensorSample("b0", 1.0, 1.1, 1.2, 10.0, 40.0),
+                SensorSample("b1", 1.1, 1.2, 1.3, 10.0, 40.0),
+            ]
+        )
+        detector.baseline_indices = [1.0, 50.0, 100.0]
+        detector.z_scores.extend([1.2, 1.3, 1.4, 1.5])
+
+        assessment = detector.process_sample(
+            SensorSample("n0", 4.0, 4.1, 4.2, 16.0, 55.0)
+        )
+
+        self.assertIsNotNone(assessment)
+        assert assessment is not None
+        self.assertLess(abs(assessment.raw_z_score), detector.state_machine.reduced_threshold_z)
+        self.assertGreater(abs(assessment.z_score), detector.state_machine.reduced_threshold_z)
+        self.assertEqual(assessment.state, "reduced")
+        self.assertEqual(assessment.motor_speed_ratio, 0.5)
+
+    def test_fault_detector_transitions_on_large_negative_z_score(self) -> None:
+        detector = FaultDetector(
+            window_size=2,
+            baseline_windows=1,
+            reduced_threshold_z=2.0,
+            stop_threshold_z=4.0,
+        )
+
+        detector.window.extend(
+            [
+                SensorSample("b0", 1.0, 1.0, 1.0, 10.0, 40.0),
+                SensorSample("b1", 1.1, 1.1, 1.1, 10.0, 40.0),
+            ]
+        )
+        detector.baseline_indices = [5.0, 5.5, 6.0]
+        detector.z_scores.extend([-5.0])
+
+        assessment = detector.process_sample(
+            SensorSample("n0", 0.1, 0.1, 0.1, 10.0, 40.0)
+        )
+
+        self.assertIsNotNone(assessment)
+        assert assessment is not None
+        self.assertLess(assessment.raw_z_score, 0.0)
+        self.assertEqual(assessment.state, "stop")
+        self.assertEqual(assessment.motor_speed_ratio, 0.0)
+
+    def test_fault_detector_forces_reduced_on_vibration_rms_threshold(self) -> None:
+        detector = FaultDetector(
+            window_size=2,
+            baseline_windows=2,
+            reduced_threshold_z=1e18,
+            stop_threshold_z=1e18,
+            reduced_vibration_rms_threshold=1.0,
+            reduced_speed_ratio=0.5,
+        )
+
+        detector.baseline_indices = [1.0, 1.1]
+        detector.window.extend(
+            [
+                SensorSample("b0", 0.1, 0.1, 0.1, 1.0, 25.0),
+                SensorSample("b1", 0.1, 0.1, 0.1, 1.0, 25.0),
+            ]
+        )
+
+        assessment = detector.process_sample(
+            SensorSample("n0", 2.0, 2.0, 2.0, 1.0, 25.0)
+        )
+
+        self.assertIsNotNone(assessment)
+        assert assessment is not None
+        self.assertEqual(assessment.state, "reduced")
+        self.assertEqual(assessment.motor_speed_ratio, 0.5)
+        self.assertEqual(assessment.override_reason, "vibration_rms")
+        self.assertAlmostEqual(assessment.vibration_rms, 2.0)
+
+    def test_fault_detector_forces_stop_on_temperature_threshold_before_baseline(self) -> None:
+        detector = FaultDetector(
+            window_size=2,
+            baseline_windows=5,
+            reduced_threshold_z=10.0,
+            stop_threshold_z=20.0,
+            stop_temperature_c_threshold=30.0,
+        )
+
+        first = detector.process_sample(
+            SensorSample("t0", 0.1, 0.1, 0.1, 1.0, 25.0)
+        )
+        second = detector.process_sample(
+            SensorSample("t1", 0.1, 0.1, 0.1, 1.0, 35.0)
+        )
+
+        self.assertIsNone(first)
+        self.assertIsNotNone(second)
+        assert second is not None
+        self.assertFalse(second.baseline_ready)
+        self.assertEqual(second.state, "stop")
+        self.assertEqual(second.motor_speed_ratio, 0.0)
+        self.assertEqual(second.override_reason, "temperature")
 
 
 if __name__ == "__main__":
